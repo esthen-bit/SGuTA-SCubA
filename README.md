@@ -1,12 +1,14 @@
-## SGuTA & SCubA :Code will be uploaded once the paper is accepted.
+## SGuTA & SCubA for VFI
 
-This code is for paper : **Spatially-Guided Temporal Attention (SGuTA) and Shifted-Cube Attention (SCubA) for Video Frame Interpolation**
+This page is for paper **Spatially-Guided Temporal Attention (SGuTA) and Shifted-Cube Attention (SCubA) for Video Frame Interpolation**
 
-#### Preview
+#### Coming soon, the source code will be uploaded once the paper is accepted!
 
-|      |      |      |
-| ---- | ---- | ---- |
-|      |      |      |
-|      |      |      |
-|      |      |      |
+### Preview
+
+| Overlayed                                                    | FLAVR                                                        | VFIT-S                                                       | VFIT-B                                                       | SGuTA                                                        | SCubA                                                        | GT                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| <img src="Qualitative comparisons/Car/138 _a_overlay.png" alt="138 _a_overlay" style="zoom:25%;" /> | ![138_c_FLAVR_26.92](Qualitative comparisons/Car/138_c_FLAVR_26.92.png) | ![138_e_VFITS_24.12](Qualitative comparisons/Car/138_e_VFITS_24.12.png) | ![138_f_VFITB_24.22](Qualitative comparisons/Car/138_f_VFITB_24.22.png) | ![138_g_SGuTA_26.75](Qualitative comparisons/Car/138_g_SGuTA_26.75.png) | ![138_SCubA_26.92](Qualitative comparisons/Car/138_SCubA_26.92.png) | ![138 _b_gt](Qualitative comparisons/Car/138 _b_gt.png)      |
+| <img src="Qualitative comparisons/Flag/942_a_overlay.png" alt="942_a_overlay" style="zoom:44%;" /> | ![942_c_FLAVR_42.66](Qualitative comparisons/Flag/942_c_FLAVR_42.66.png) | ![942_d_VFITS_38.66](Qualitative comparisons/Flag/942_d_VFITS_38.66.png) | ![942_e_VFITB_39.28](Qualitative comparisons/Flag/942_e_VFITB_39.28.png) | ![942_f_SGuTA_41.33](Qualitative comparisons/Flag/942_f_SGuTA_41.33.png) | ![942_g_SCubA_42.66](Qualitative comparisons/Flag/942_g_SCubA_42.66.png) | ![942_b_gt](Qualitative comparisons/Flag/942_b_gt.png)       |
+| <img src="Qualitative comparisons/Goose/245 _a_overlay.png" alt="245 _a_overlay" style="zoom:16%;" /> | <img src="Qualitative comparisons/Goose/245_c_FLAVR_32.70.png" alt="245_c_FLAVR_32.70" style="zoom:67%;" /> | <img src="Qualitative comparisons/Goose/245_e_VFITS_31.72.png" alt="245_e_VFITS_31.72" style="zoom:67%;" /> | <img src="Qualitative comparisons/Goose/245_f_VFITB_31.74.png" alt="245_f_VFITB_31.74" style="zoom:67%;" /> | <img src="Qualitative comparisons/Goose/245_g_SGuTA_32.37.png" alt="245_g_SGuTA_32.37" style="zoom:67%;" /> | <img src="Qualitative comparisons/Goose/245_SCubA_32.70.png" alt="245_SCubA_32.70" style="zoom:67%;" /> | <img src="Qualitative comparisons/Goose/245 _b_gt.png" alt="245 _b_gt" style="zoom:67%;" /> |
 
