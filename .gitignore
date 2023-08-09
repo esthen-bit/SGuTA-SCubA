@@ -2,4 +2,6 @@
 !*.py
 !/*
 !*.txt
+!*.png
 train.sh
+.gitignore
