@@ -225,8 +225,8 @@ class TransUnet(nn.Module):
         dim_stage = emb_dim
         for i in range(num_scale):
             self.encoder_layers.append(nn.ModuleList([
-                MAB(dim=dim_stage, num_cubes=num_cubes[i], dim_head=emb_dim, heads=dim_stage // emb_dim, cube_size=cube_size), # SAB 模块
-                nn.Conv3d(dim_stage, dim_stage * 2, kernel_size=(3,3,3), stride=(1,2,2), padding=1), # 4*4的卷积核kernel_size=(3,3,3), stride=(1,2,2), padding=1
+                MAB(dim=dim_stage, num_cubes=num_cubes[i], dim_head=emb_dim, heads=dim_stage // emb_dim, cube_size=cube_size), 
+                nn.Conv3d(dim_stage, dim_stage * 2, kernel_size=patch_size, stride=(1,2,2), padding=(0,1,1)), 
             ])) 
             dim_stage *= 2
 
@@ -237,8 +237,8 @@ class TransUnet(nn.Module):
         self.decoder_layers = nn.ModuleList([])
         for i in range(num_scale):
             self.decoder_layers.append(nn.ModuleList([
-                nn.ConvTranspose3d(dim_stage, dim_stage // 2, kernel_size=(3,3,3), stride=(1,2,2), padding=1,output_padding=(0,1,1)),# Upsample
-                nn.Conv3d(dim_stage, dim_stage // 2, 1, 1, bias=False), # 1*1的卷积核
+                nn.ConvTranspose3d(dim_stage, dim_stage // 2, kernel_size=patch_size, stride=(1,2,2), padding=(0,1,1), output_padding=(0,1,1)),# Upsample
+                nn.Conv3d(dim_stage, dim_stage // 2, 1, 1, bias=False), 
                 MAB(dim=dim_stage // 2, num_cubes=num_cubes[num_scale - 1 - i], dim_head=emb_dim,heads=(dim_stage // 2) // emb_dim, cube_size=cube_size),
             ]))
             dim_stage //= 2
@@ -307,12 +307,12 @@ class SCubA_Ntd(nn.Module):
         """
         x = torch.stack(x, dim=2)
         ## Batch mean normalization works slightly better than global mean normalization, thanks to https://github.com/myungsub/CAIN
-        mean_ = x.mean(2, keepdim=True).mean(3, keepdim=True).mean(4,keepdim=True)
+        mean_ = x.mean(2, keepdim=True).mean(3, keepdim=True).mean(4, keepdim=True)
         x = x-mean_ 
 
         b, c, d_inp, h_inp, w_inp = x.shape
         
-        db, hb, wb = self.n_inputs, 2**self.num_scale*self.cube_size[1], 2**self.num_scale*self.cube_size[2]
+        db, hb, wb = self.n_inputs, 2**(self.num_scale+1)*self.cube_size[1], 2**(self.num_scale+1)*self.cube_size[2]
         pad_d = (db - d_inp % db) % db 
         pad_h = (hb - h_inp % hb) % hb
         pad_w = (wb - w_inp % wb) % wb
@@ -329,8 +329,8 @@ class SCubA_Ntd(nn.Module):
     
     
 if __name__ == "__main__":
-    model = SCubA_Ntd(in_channels=3, n_outputs=1, n_feat=36, patch_size=(1,3,3), cube_size=(2,4,4), stage=1).cuda()
-    b,c,d,h,w = 2, 3, 4, 256, 448
+    model = SCubA_Ntd(in_channels=3, n_outputs=1, n_feat=32, patch_size=(1,3,3), cube_size=(2,8,8), stage=2, num_scale=3).cuda()
+    b,c,d,h,w = 1, 3, 4, 256, 256
     input = [torch.randn(b,c,h,w).cuda() for _ in range(d)]
     import time
     t = time.time()

@@ -31,7 +31,7 @@ if torch.distributed.get_rank() == args.main_rank:
     print("#######          That's it                ########")
     
 ##### log configration #####
-save_loc = os.path.join(args.checkpoint_dir , "checkpoints" , args.dataset , args.model)
+save_loc = os.path.join(args.checkpoint_dir , "checkpoints" , args.dataset , args.model, str(args.stage))
 if not os.path.exists(save_loc):
     os.makedirs(save_loc)
 opts_file = os.path.join(save_loc , "opts.txt")

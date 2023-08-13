@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from einops import rearrange
 import math
 import warnings
-from torch.nn.init import _calculate_fan_in_and_fan_out
 import time 
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
@@ -50,25 +49,22 @@ def cube_partition(x, cube_size):
     """
     Args:
         x: (B, H, W, C)
-        block_size (int): block size
+        cube_size (int): cube size
 
     Returns:
-        blocks: (num_blocks*B, block_size, block_size, C)
+        cubes: (num_cubes*B, cube_size, cube_size, C)
     """
     B, D, H, W, C = x.shape
     b_d, b_h, b_w =cube_size[0], cube_size[1], cube_size[2]
-    # if b_d == 0:
-    #     b_d = D
     x = x.view(B, D // b_d, b_d, H // b_h, b_h, W // b_w, b_w, C)
-    blocks = x.permute(0, 1, 3, 5, 2, 4, 6 ,7).contiguous().view(-1, b_d,b_h, b_w, C)
-    # return blocks.view(-1, block_size[0]*block_size[1]*block_size[2], C)
-    return blocks
+    cubes = x.permute(0, 1, 3, 5, 2, 4, 6 ,7).contiguous().view(-1, b_d,b_h, b_w, C)
+    return cubes
 
 
-def compute_attn_mask(D, H, W, cube_size=(2,8,8)):
-    b_d, b_h, b_w = cube_size[0], cube_size[1], cube_size[2]  # block depth/height/width    
+def compute_attn_mask(D, H, W, device,cube_size=(2,8,8)):
+    b_d, b_h, b_w = cube_size[0], cube_size[1], cube_size[2]  # cube depth/height/width    
     m_d, m_h, m_w = b_d//2, b_h//2, b_w//2 ## move depth/height/width
-    mask = torch.zeros((1, D, H, W, 1))  # 1 C H W 1
+    mask = torch.zeros((1, D, H, W, 1), device=device)  # 1 C H W 1
     d_slices = (slice(0, -b_d),
                 slice(-b_d, -m_d),
                 slice(-m_d, None))
@@ -84,9 +80,9 @@ def compute_attn_mask(D, H, W, cube_size=(2,8,8)):
             for w in w_slices:
                 mask[:, d, h, w, :] = cnt
                 cnt += 1
-    mask_blocks = cube_partition(mask, cube_size)  # nW, window_size, window_size, 1
-    mask_blocks = mask_blocks.view(-1, b_d*b_h*b_w)# nB, block_depth
-    attn_mask = mask_blocks.unsqueeze(1) - mask_blocks.unsqueeze(2)
+    mask_cubes = cube_partition(mask, cube_size)  # nW, cube_size, cube_size, 1
+    mask_cubes = mask_cubes.view(-1, b_d*b_h*b_w)# nB, cube_depth
+    attn_mask = mask_cubes.unsqueeze(1) - mask_cubes.unsqueeze(2)
     attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
     return attn_mask   
 
@@ -102,27 +98,42 @@ class TransCube(nn.Module):
         super().__init__()
         self.num_heads = heads
         self.dim_head = dim_head
-        self.to_q = nn.Linear(dim, dim_head * heads, bias=False)
-        self.to_k = nn.Linear(dim, dim_head * heads, bias=False)
-        self.to_v = nn.Linear(dim, dim_head * heads, bias=False)
-        self.rescale = nn.Parameter(torch.ones(heads, 1, 1))
-        self.proj = nn.Linear(dim_head * heads, dim, bias=True)
-        self.pos_emb = nn.Sequential(
-            nn.Conv3d(dim, dim, 3, 1, 1, bias=False, groups=dim),
-            GELU(),
-            nn.Conv3d(dim, dim, 3, 1, 1, bias=False, groups=dim),
-        )
-        self.dim = dim
         self.cube_size = cube_size
-        
+        self.dim = dim
+        self.to_q = nn.Linear(dim, dim_head * heads, bias=True)
+        self.to_k = nn.Linear(dim, dim_head * heads, bias=True)
+        self.to_v = nn.Linear(dim, dim_head * heads, bias=True)
+        self.rescale = dim_head ** -0.5
+        self.proj = nn.Linear(dim_head * heads, dim, bias=True)
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * cube_size[0] - 1) * (2 * cube_size[1] - 1) * (2 * cube_size[2] - 1), heads))  # 2*Wd-1 * 2*Wh-1 * 2*Ww-1, nH
 
-    def forward(self, x, move_block):
+        # get pair-wise relative position index for each token inside the window
+        coords_d = torch.arange(self.cube_size[0])
+        coords_h = torch.arange(self.cube_size[1])
+        coords_w = torch.arange(self.cube_size[2])
+        coords = torch.stack(torch.meshgrid(coords_d, coords_h, coords_w))  # 3, Wd, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 3, Wd*Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 3, Wd*Wh*Ww, Wd*Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wd*Wh*Ww, Wd*Wh*Ww, 3
+        relative_coords[:, :, 0] += self.cube_size[0] - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.cube_size[1] - 1
+        relative_coords[:, :, 2] += self.cube_size[2] - 1
+
+        relative_coords[:, :, 0] *= (2 * self.cube_size[1] - 1) * (2 * self.cube_size[2] - 1)
+        relative_coords[:, :, 1] *= (2 * self.cube_size[2] - 1)
+        relative_position_index = relative_coords.sum(-1)  # Wd*Wh*Ww, Wd*Wh*Ww
+        self.register_buffer("relative_position_index", relative_position_index)
+        trunc_normal_(self.relative_position_bias_table, std=.02)
+        
+    def forward(self, x, move_cube):
         b, d, h, w, c= x.shape
         cube_size = self.cube_size 
-        c_d, c_h, c_w = cube_size[0], cube_size[1], cube_size[2]       
-        if move_block:
+        c_d, c_h, c_w = cube_size[0], cube_size[1], cube_size[2]
+        patches_in_cube = c_d * c_h * c_w       
+        if move_cube:
             x = torch.roll(x, shifts=(-c_d//2, -c_h//2, -c_w//2), dims=(1, 2, 3))
-        x = cube_partition(x, cube_size).view(-1, c_d*c_h*c_w, c) 
+        x = cube_partition(x, cube_size).view(-1, patches_in_cube, c) 
             
         q_inp = self.to_q(x) 
         k_inp = self.to_k(x)
@@ -132,28 +143,25 @@ class TransCube(nn.Module):
 
         # q: b,heads,d*h*w,c
         q = F.normalize(q, dim=-2, p=2)
-        k = F.normalize(k, dim=-2, p=2)
-        # attn = (k @ q.transpose(-2, -1)) 
+        k = F.normalize(k, dim=-2, p=2)        
+        attn = (q @ k.transpose(-2, -1)) * self.rescale
+
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index[:patches_in_cube, :patches_in_cube].reshape(-1)].reshape(
+            patches_in_cube, patches_in_cube, -1) 
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wd*Wh*Ww, Wd*Wh*Ww
+        attn = attn + relative_position_bias.unsqueeze(0) # B_, nH, patches_in_cube, patches_in_cube
         
-   
-        attn = (q @ k.transpose(-2, -1) ) 
-        attn = attn * self.rescale
-        
-        if move_block:
-            mask = compute_attn_mask(d, h, w, cube_size)
-            n_B = mask.shape[0]
-            N = c_d* c_h* c_w
-            attn = attn.view(b, n_B, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0).cuda()
-            attn = attn.view(-1, self.num_heads, N, N)
+        if move_cube:
+            mask = compute_attn_mask(d, h, w, x.device,cube_size)
+            n_c = mask.shape[0]
+            attn = attn.view(b, n_c, self.num_heads, patches_in_cube, patches_in_cube) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, patches_in_cube, patches_in_cube)
 
         attn = attn.softmax(dim=-1)
-        x = (attn @ v).transpose(1,2)
-        x = x.reshape(b, d * h * w , self.num_heads * self.dim_head)
-        out_c = self.proj(x).view(b, d, h, w, c)
-        if move_block:
-            x = torch.roll(out_c, shifts=(c_d//2, c_h//2, c_w//2), dims=(1, 2, 3))
-        out_p = self.pos_emb(v_inp.reshape(b, d, h, w, c).permute(0, 4, 1, 2, 3)).permute(0, 2, 3, 4, 1) # P = f_p(v)
-        out = out_c + out_p
+        x = (attn @ v).transpose(1, 2).reshape(-1, patches_in_cube, c)
+        out = self.proj(x).view(b, d, h, w, c)
+        if move_cube:
+            out = torch.roll(out, shifts=(c_d//2, c_h//2, c_w//2), dims=(1, 2, 3))
         return out
 
 
@@ -184,13 +192,13 @@ class MAB(nn.Module):
             dim,
             dim_head,
             heads,
-            num_blocks,
+            num_cubes,
             cube_size
     ):
         super().__init__()
-        self.blocks = nn.ModuleList([])
-        for _ in range(num_blocks):
-            self.blocks.append(nn.ModuleList([
+        self.cubes = nn.ModuleList([])
+        for _ in range(num_cubes):
+            self.cubes.append(nn.ModuleList([
                 PreNorm(dim, TransCube(dim=dim, dim_head=dim_head, heads=heads, cube_size=cube_size)),
                 PreNorm(dim, TransCube(dim=dim, dim_head=dim_head, heads=heads, cube_size=cube_size)),
                 PreNorm(dim, FeedForward(dim=dim)),
@@ -203,59 +211,52 @@ class MAB(nn.Module):
         return out: [b,c,d,h,w]
         """
         x = x.permute(0, 2, 3, 4, 1) 
-        for (attn, sc_attn, ff, sc_ff) in self.blocks:
-            x = attn(x,move_block=False) + x
+        for (attn, sc_attn, ff, sc_ff) in self.cubes:
+            x = attn(x,move_cube=False) + x
             x = ff(x) + x
             
-            x = sc_attn(x, move_block=True) + x
+            x = sc_attn(x, move_cube=True) + x
             x = sc_ff(x) + x  
         out = x.permute(0, 4, 1, 2, 3)
         return out
 
 class TransUnet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, emb_dim=32, patch_size=(1,4,4), cube_size=(2,4,4), stage=2, num_blocks=[2,4,4]):
+    def __init__(self, in_channels=3, out_channels=3, emb_dim=32, patch_size=(1,3,3), cube_size=(2,4,4), num_scale=3, num_cubes=[2,4,4]):
         super(TransUnet, self).__init__()
         
-        self.stage = stage
+        self.num_scale = num_scale
 
         # Input projection
-        # self.embedding = nn.Conv3d(in_channels, emb_dim, patch_size, patch_size, bias=False)
-        self.embedding = nn.Conv3d(in_channels, emb_dim, patch_size, (1,2,2), (0,1,1), bias=False)
-        # self.embedding = nn.Conv3d(in_channels, emb_dim, (1,3,3), 1, (0,1,1), bias=False)
-
-
+        self.embedding = nn.Conv3d(in_channels, emb_dim, patch_size, (1,2,2), (0,1,1))
         # Encoder
         self.encoder_layers = nn.ModuleList([])
         dim_stage = emb_dim
-        for i in range(stage):
+        for i in range(num_scale):
             self.encoder_layers.append(nn.ModuleList([
-                MAB(dim=dim_stage, num_blocks=num_blocks[i], dim_head=emb_dim, heads=dim_stage // emb_dim, cube_size=cube_size), # SAB 模块
-                nn.Conv3d(dim_stage, dim_stage * 2, 4, 2, 1, bias=False), # 4*4的卷积核
+                MAB(dim=dim_stage, num_cubes=num_cubes[i], dim_head=emb_dim, heads=dim_stage // emb_dim, cube_size=cube_size), 
+                nn.Conv3d(dim_stage, dim_stage * 2, kernel_size=patch_size, stride=(1,2,2), padding=(0,1,1)), 
             ])) 
             dim_stage *= 2
 
         # Bottleneck
-        self.bottleneck = MAB(dim=dim_stage, dim_head=emb_dim, heads=dim_stage // emb_dim, num_blocks=num_blocks[-1], cube_size=cube_size)
+        self.bottleneck = MAB(dim=dim_stage, dim_head=emb_dim, heads=dim_stage // emb_dim, num_cubes=num_cubes[-1], cube_size=cube_size)
 
         # Decoder
         self.decoder_layers = nn.ModuleList([])
-        for i in range(stage):
+        for i in range(num_scale):
             self.decoder_layers.append(nn.ModuleList([
-                nn.ConvTranspose3d(dim_stage, dim_stage // 2, stride=2, kernel_size=2, padding=0, output_padding=0),# Upsample
-                nn.Conv3d(dim_stage, dim_stage // 2, 1, 1, bias=False), # 1*1的卷积核
-                MAB(dim=dim_stage // 2, num_blocks=num_blocks[stage - 1 - i], dim_head=emb_dim,heads=(dim_stage // 2) // emb_dim, cube_size=cube_size),
+                nn.ConvTranspose3d(dim_stage, dim_stage // 2, kernel_size=patch_size, stride=(1,2,2), padding=(0,1,1), output_padding=(0,1,1)),# Upsample
+                nn.Conv3d(dim_stage, dim_stage // 2, 1, 1, bias=False), 
+                MAB(dim=dim_stage // 2, num_cubes=num_cubes[num_scale - 1 - i], dim_head=emb_dim,heads=(dim_stage // 2) // emb_dim, cube_size=cube_size),
             ]))
             dim_stage //= 2
 
         # Output projection
-        # self.mapping = nn.ConvTranspose3d(emb_dim, out_channels, patch_size, patch_size, bias=False)
-        self.mapping = nn.ConvTranspose3d(emb_dim, out_channels, patch_size, (1,2,2),(0,1,1), bias=False)
+        self.de_emb = nn.ConvTranspose3d(emb_dim, out_channels, patch_size, (1,2,2), (0,1,1), output_padding=(0,1,1))
 
-        # self.mapping = nn.Conv3d(emb_dim, out_channels, (1,3,3), 1, (0,1,1), bias=False)
-
-        #### activation function
+        # #### activation function
         # self.lrelu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
-        # self.apply(self._init_weights)
+        self.apply(self._init_weights)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -288,22 +289,25 @@ class TransUnet(nn.Module):
         # Decoder
         for i, (UpSample, Fusion, Dc_MSAB) in enumerate(self.decoder_layers):
             fea = UpSample(fea)
-            fea = Fusion(torch.cat([fea, fea_encoder[self.stage-1-i]], dim=1)) # Fution：1*1卷积
+            fea = Fusion(torch.cat([fea, fea_encoder[self.num_scale-1-i]], dim=1)) # Fution：1*1卷积
             fea = Dc_MSAB(fea)
 
-        # Mapping
-        out = self.mapping(fea) + x
+        # de_emb
+        out = self.de_emb(fea) + x
 
         return out
 
-class SCubA(nn.Module): 
-    def __init__(self, in_channels=3, n_outputs=1, n_feat=64, patch_size=(1,4,4), cube_size=(2,4,4), stage=2, **kwargs):
-        super(SCubA, self).__init__()
+class SCubA_RP(nn.Module): 
+    def __init__(self, in_channels=3, n_inputs=4, n_outputs=1, n_feat=36, patch_size=(1,3,3), cube_size=(2,4,4), stage=1, num_scale=3, **kwargs):
+        super(SCubA_RP, self).__init__()
         out_channels = n_outputs * in_channels
-        modules_body = [TransUnet(in_channels, out_channels, emb_dim=n_feat, patch_size=patch_size, cube_size=cube_size, stage=2, num_blocks=[1,1,1]) for _ in range(stage)]
+        modules_body = [TransUnet(in_channels, out_channels, emb_dim=n_feat, patch_size=patch_size, cube_size=cube_size, num_scale=num_scale, num_cubes=[1,1,1]) for _ in range(stage)]
         self.body = nn.Sequential(*modules_body) 
-        self.conv_out = nn.Conv3d(out_channels, out_channels, kernel_size=(8,3,3), padding=(0,1,1),bias=False)
+        self.conv_out = nn.Conv3d(out_channels, out_channels, kernel_size=(n_inputs,3,3), padding=(0,1,1))
         self.out_channels = out_channels
+        self.n_inputs = n_inputs
+        self.cube_size = cube_size
+        self.num_scale = num_scale
     def forward(self, x):
         """
         x: [b,c,h,w]
@@ -311,14 +315,16 @@ class SCubA(nn.Module):
         """
         x = torch.stack(x, dim=2)
         ## Batch mean normalization works slightly better than global mean normalization, thanks to https://github.com/myungsub/CAIN
-        mean_ = x.mean(2, keepdim=True).mean(3, keepdim=True).mean(4,keepdim=True)
+        mean_ = x.mean(2, keepdim=True).mean(3, keepdim=True).mean(4, keepdim=True)
         x = x-mean_ 
 
         b, c, d_inp, h_inp, w_inp = x.shape
-        db, hb, wb = 8, 32, 32 
+        
+        db, hb, wb = self.n_inputs, 2**(self.num_scale+1)*self.cube_size[1], 2**(self.num_scale+1)*self.cube_size[2]
+        pad_d = (db - d_inp % db) % db 
         pad_h = (hb - h_inp % hb) % hb
         pad_w = (wb - w_inp % wb) % wb
-        pad_d = (db - d_inp % db) % db
+
         x = F.pad(x, [pad_w//2, pad_w//2, pad_h//2, pad_h//2, pad_d//2,pad_d//2], mode='constant')#(left_pad, right_pad, top_pad, bottom_pad, front_pad, back_pad)
        
         h = self.body(x)
@@ -331,8 +337,8 @@ class SCubA(nn.Module):
     
     
 if __name__ == "__main__":
-    model = SCubA(in_channels=3, n_outputs=1, n_feat=64, patch_size=(1,4,4), cube_size=(2,4,4), stage=2).cuda()
-    b,c,d,h,w = 2, 3, 8, 128, 128 
+    model = SCubA_RP(in_channels=3, n_outputs=1, n_feat=32, patch_size=(1,3,3), cube_size=(2,8,8), stage=2, num_scale=3).cuda()
+    b,c,d,h,w = 1, 3, 4, 256, 256
     input = [torch.randn(b,c,h,w).cuda() for _ in range(d)]
     import time
     t = time.time()
