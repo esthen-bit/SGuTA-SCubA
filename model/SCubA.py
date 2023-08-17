@@ -297,7 +297,7 @@ class TransUnet(nn.Module):
         return out
 
 class SCubA(nn.Module): 
-    def __init__(self, in_channels=3, n_outputs=1, n_feat=64, patch_size=(1,4,4), cube_size=(2,4,4), stage=2, **kwargs):
+    def __init__(self, in_channels=3, n_outputs=1, n_feat=64, patch_size=(1,4,4), cube_size=(2,4,4), stage=3, **kwargs):
         super(SCubA, self).__init__()
         out_channels = n_outputs * in_channels
         modules_body = [TransUnet(in_channels, out_channels, emb_dim=n_feat, patch_size=patch_size, cube_size=cube_size, stage=2, num_blocks=[1,1,1]) for _ in range(stage)]

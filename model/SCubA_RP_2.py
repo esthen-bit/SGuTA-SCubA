@@ -30,7 +30,7 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
 
-class PreNorm(nn.Module):
+class Norm(nn.Module):
     def __init__(self, dim, fn):
         super().__init__()
         self.fn = fn
@@ -86,7 +86,7 @@ def compute_attn_mask(D, H, W, device,cube_size=(2,8,8)):
     attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
     return attn_mask   
 
-class TransCube(nn.Module):
+class MSA(nn.Module):
     def __init__(
             self,
             dim,
@@ -199,10 +199,10 @@ class MAB(nn.Module):
         self.cubes = nn.ModuleList([])
         for _ in range(num_cubes):
             self.cubes.append(nn.ModuleList([
-                PreNorm(dim, TransCube(dim=dim, dim_head=dim_head, heads=heads, cube_size=cube_size)),
-                PreNorm(dim, TransCube(dim=dim, dim_head=dim_head, heads=heads, cube_size=cube_size)),
-                PreNorm(dim, FeedForward(dim=dim)),
-                PreNorm(dim, FeedForward(dim=dim))
+                Norm(dim, MSA(dim=dim, dim_head=dim_head, heads=heads, cube_size=cube_size)),
+                Norm(dim, MSA(dim=dim, dim_head=dim_head, heads=heads, cube_size=cube_size)),
+                Norm(dim, FeedForward(dim=dim)),
+                Norm(dim, FeedForward(dim=dim))
             ]))
 
     def forward(self, x):
@@ -220,21 +220,21 @@ class MAB(nn.Module):
         out = x.permute(0, 4, 1, 2, 3)
         return out
 
-class TransUnet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, emb_dim=32, patch_size=(1,3,3), cube_size=(2,4,4), num_scale=3, num_cubes=[2,4,4]):
-        super(TransUnet, self).__init__()
+class MultiStageScale(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, emb_dim=32, patch_size=(3,4,4), cube_size=(2,8,8), num_scale=3, num_cubes=[1,1,1]):
+        super(MultiStageScale, self).__init__()
         
         self.num_scale = num_scale
 
         # Input projection
-        self.embedding = nn.Conv3d(in_channels, emb_dim, patch_size, (1,2,2), (0,1,1))
+        self.embedding = nn.Conv3d(in_channels, emb_dim, patch_size, (1,2,2), (1,1,1))
         # Encoder
         self.encoder_layers = nn.ModuleList([])
         dim_stage = emb_dim
         for i in range(num_scale):
             self.encoder_layers.append(nn.ModuleList([
                 MAB(dim=dim_stage, num_cubes=num_cubes[i], dim_head=emb_dim, heads=dim_stage // emb_dim, cube_size=cube_size), 
-                nn.Conv3d(dim_stage, dim_stage * 2, kernel_size=patch_size, stride=(1,2,2), padding=(0,1,1)), 
+                nn.Conv3d(dim_stage, dim_stage * 2, kernel_size=patch_size, stride=(1,2,2), padding=(1,1,1)), 
             ])) 
             dim_stage *= 2
 
@@ -245,14 +245,14 @@ class TransUnet(nn.Module):
         self.decoder_layers = nn.ModuleList([])
         for i in range(num_scale):
             self.decoder_layers.append(nn.ModuleList([
-                nn.ConvTranspose3d(dim_stage, dim_stage // 2, kernel_size=patch_size, stride=(1,2,2), padding=(0,1,1), output_padding=(0,1,1)),# Upsample
+                nn.ConvTranspose3d(dim_stage, dim_stage // 2, kernel_size=patch_size, stride=(1,2,2), padding=(1,1,1)),# Upsample
                 nn.Conv3d(dim_stage, dim_stage // 2, 1, 1, bias=False), 
                 MAB(dim=dim_stage // 2, num_cubes=num_cubes[num_scale - 1 - i], dim_head=emb_dim,heads=(dim_stage // 2) // emb_dim, cube_size=cube_size),
             ]))
             dim_stage //= 2
 
         # Output projection
-        self.de_emb = nn.ConvTranspose3d(emb_dim, out_channels, patch_size, (1,2,2), (0,1,1), output_padding=(0,1,1))
+        self.de_emb = nn.ConvTranspose3d(emb_dim, out_channels, patch_size, (1,2,2), (1,1,1))
 
         # #### activation function
         # self.lrelu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
@@ -297,11 +297,11 @@ class TransUnet(nn.Module):
 
         return out
 
-class SCubA_RP(nn.Module): 
-    def __init__(self, in_channels=3, n_inputs=4, n_outputs=1, n_feat=36, patch_size=(1,3,3), cube_size=(2,4,4), stage=1, num_scale=3, **kwargs):
-        super(SCubA_RP, self).__init__()
+class SCubA_RP_2(nn.Module): 
+    def __init__(self, in_channels=3, n_inputs=4, n_outputs=1, n_feat=36, patch_size=(3,3,3), cube_size=(2,4,4), stage=1, num_scale=3, **kwargs):
+        super(SCubA_RP_2, self).__init__()
         out_channels = n_outputs * in_channels
-        modules_body = [TransUnet(in_channels, out_channels, emb_dim=n_feat, patch_size=patch_size, cube_size=cube_size, num_scale=num_scale, num_cubes=[1,1,1]) for _ in range(stage)]
+        modules_body = [MultiStageScale(in_channels, out_channels, emb_dim=n_feat, patch_size=patch_size, cube_size=cube_size, num_scale=num_scale, num_cubes=[1,1,1]) for _ in range(stage)]
         self.body = nn.Sequential(*modules_body) 
         self.conv_out = nn.Conv3d(out_channels, out_channels, kernel_size=(n_inputs,3,3), padding=(0,1,1))
         self.out_channels = out_channels
@@ -337,9 +337,12 @@ class SCubA_RP(nn.Module):
     
     
 if __name__ == "__main__":
-    model = SCubA_RP(in_channels=3, n_outputs=1, n_feat=32, patch_size=(1,3,3), cube_size=(2,8,8), stage=2, num_scale=3).cuda()
-    b,c,d,h,w = 1, 3, 4, 256, 448
-    input = [torch.randn(b,c,h,w).cuda() for _ in range(d)]
+    # device = "cuda:0"
+    device = "cpu"
+
+    model = SCubA_RP_2(in_channels=3, n_outputs=1, n_feat=32, patch_size=(3,4,4), cube_size=(2,8,8), stage=2, num_scale=3).to(device)
+    b,c,d,h,w = 1, 3, 4, 256, 256
+    input = [torch.randn(b,c,h,w).to(device) for _ in range(d)]
     import time
     t = time.time()
     model(input)

@@ -110,6 +110,8 @@ for i in range(len(theme)):
     outputs.append(frames[2])
     
     for i in range(int(math.log(args.factor, 2))):
+        idxs = torch.Tensor(range(len(frames))).type(torch.long).view(1,-1).unfold(1,size=4,step=1).squeeze(0)
+
         idxs = torch.Tensor(range(len(frames))).type(torch.long).view(1,-1).unfold(1,size=6,step=1).squeeze(0)
         outputs = [] ## store the input and interpolated frames
         outputs.append(frames[0])

@@ -23,9 +23,9 @@ parser = argparse.ArgumentParser()
 
 
 # parser.add_argument("--input_dir" , type=str , required=False, default='/mnt/sdb5/SNU-FILM/GOPRO_test/', help="Path/WebURL to input video")
-# parser.add_argument("--output_dir" , type=str , required=False, default='/mnt/sdb5/QualiCompare_GOPRO/4K', help="Path/WebURL to input video")
-parser.add_argument("--input_dir" , type=str , required=False, default='/mnt/sdb5/xiph/', help="Path/WebURL to input video")
-parser.add_argument("--output_dir" , type=str , required=False, default='/mnt/sdb5/QualiCompare_xiph', help="Path/WebURL to input video")
+parser.add_argument("--input_dir" , type=str , required=False, default='/mnt/sdb5/Davis_test/', help="Path/WebURL to input video")
+# parser.add_argument("--input_dir" , type=str , required=False, default='/mnt/sdb5/xiph/', help="Path/WebURL to input video")
+parser.add_argument("--output_sub_path" , type=str , required=False, default='QualiCompare_1234', help="Path/WebURL to input video")
 parser.add_argument('--nbr_frame' , type=int , default=6)
 parser.add_argument('--emb_dim', type=int, default=64)
 parser.add_argument('--patch_size', type=tuple, default=(1,4,4))
@@ -37,7 +37,7 @@ parser.add_argument("--factor" , type=int , required=False , default=2, choices=
 parser.add_argument("--codec" , type=str , help="video codec" , default="mpeg4")
 parser.add_argument("--output_ext" , type=str , help="Output video format" , default=".avi")
 parser.add_argument("--input_ext" , type=str, help="Input video format", default=".mp4")
-parser.add_argument("--t_downscale" , type=float , help="temporal Downscale" , default=2)
+parser.add_argument("--t_downscale" , type=float , help="temporal Downscale" , default=1)
 parser.add_argument("--downscale" , type=float , help="spatial Downscale" , default=1)
 parser.add_argument("--output_fps" , type=int , help="Target FPS" , default=30)
 parser.add_argument("--is_folder" ,default='/home/esthen/Datasets/Davis_test/bear/', action="store_true" )
@@ -70,12 +70,12 @@ def make_image(img):
 
 def files_to_videoTensor(path , time_downscale=1):
     from PIL import Image
-    files = sorted(os.listdir(path))[::time_downscale][:80]
+    files = sorted(os.listdir(path))[::time_downscale]#[:80]
     print(len(files))
     T = transforms.Compose([
                 transforms.ToTensor(),
-                # transforms.CenterCrop((720,844))
-                transforms.Resize((768, 768), interpolation=Image.BILINEAR)
+                transforms.CenterCrop((720,844))
+                # transforms.Resize((768, 768), interpolation=Image.BILINEAR)
             ])
     # images = [torch.Tensor(np.asarray(Image.open(os.path.join(input_video , f)).convert("RGB"))).type(torch.uint8) for f in files]
     videoTensor = [T(Image.open(os.path.join(input_video , f))) for f in files]
@@ -101,7 +101,7 @@ def video_transform(videoTensor , downscale=1):
     print("Resizing to %dx%d"%(resizes[0] , resizes[1]) )
     return videoTensor , resizes
 
-os.environ["CUDA_VISIBLE_DEVICES"]='2'
+os.environ["CUDA_VISIBLE_DEVICES"]='1'
 input_ext = args.input_ext
 
 scuba = SCubA(in_channels=3, n_outputs=1, n_feat=64, patch_size=(1,4,4), cube_size=(2,4,4), stage=3).to(args.device)
@@ -153,7 +153,9 @@ for i in range(len(theme)):
                 torch.cuda.empty_cache()
                 idxSet = idxs[i]
                 inputs_1 = [frames[idx_].to(args.device).unsqueeze(0) for idx_ in idxSet]
-                inputs_2 = [inputs_1[0],inputs_1[2],inputs_1[3],inputs_1[5]]
+                # inputs_2 = [inputs_1[0],inputs_1[2],inputs_1[3],inputs_1[5]]
+                inputs_2 = [inputs_1[1],inputs_1[2],inputs_1[3],inputs_1[4]]
+
                 out_vfits = vfit_s(inputs_2)[0].squeeze(0)
                 out_vfitb = vfit_b(inputs_2)[0].squeeze(0)    
                 out_sguta = sguta(inputs_1)[0].squeeze(0)  
@@ -163,12 +165,13 @@ for i in range(len(theme)):
                 combined_image = combine_image(out_raw, out_sguta, out_scuba,out_flavr, out_vfits, out_vfitb)
                 outputs.append(combined_image.cpu())
                 
-                outputs.append(combine_image(inputs_1[3].squeeze(0),inputs_1[3].squeeze(0),inputs_1[3].squeeze(0),inputs_1[3].squeeze(0),inputs_1[3].squeeze(0),inputs_1[3].squeeze(0)))                        
+                outputs.append(combine_image(inputs_1[3].squeeze(0).cpu(),inputs_1[3].squeeze(0).cpu(),inputs_1[3].squeeze(0).cpu(),inputs_1[3].squeeze(0).cpu(),inputs_1[3].squeeze(0).cpu(),inputs_1[3].squeeze(0).cpu()))                        
             outputs.append(combine_image(frames[-3],frames[-3],frames[-3],frames[-3],frames[-3],frames[-3]))
             outputs.append(combine_image(frames[-2],frames[-2],frames[-2],frames[-2],frames[-2],frames[-2]))
             outputs.append(combine_image(frames[-1],frames[-1],frames[-1],frames[-1],frames[-1],frames[-1]))
             frames = outputs
-    image_save_path = os.path.join(args.output_dir, 'SNU_FILM', "Combined",'sequence' ,video_name)
+    output_dir = args.input_dir.replace('sdb5/','sdb5/'+f"{args.output_sub_path}/")
+    image_save_path = os.path.join(output_dir, 'Sequence' ,video_name)
     
     if not os.path.exists(image_save_path):
         os.makedirs(image_save_path)
@@ -176,7 +179,7 @@ for i in range(len(theme)):
     for i, im_ in enumerate(outputs):
         save_image(im_, os.path.join(image_save_path, "{:05d}.png".format(i)))
     new_video = [make_image(im_) for im_ in outputs]
-    path_output_video = os.path.join(args.output_dir, 'SNU_FILM', "Combined", "Video")
+    path_output_video = os.path.join(output_dir, "Video")
     if not os.path.exists(path_output_video):
         os.makedirs(path_output_video)
     write_video_cv2(new_video , os.path.join(path_output_video, video_name + f"_{args.factor}x" + str(args.output_ext)) , args.output_fps , (outputs[0].shape[-1] , outputs[0].shape[-2]))

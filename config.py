@@ -15,13 +15,13 @@ data_arg.add_argument('--data_root', type=str, default='/mnt/sdb5/vimeo_septuple
 
 # Model
 model_arg = add_argument_group('Model')
-model_arg.add_argument('--model',  type=str, default="SCubA_Ntd")
+model_arg.add_argument('--model',  type=str, default="SCubA_RP_2")
 model_arg.add_argument('--n_inputs' , type=int , default=4)
 model_arg.add_argument('--n_outputs' , type=int , default=1)
-model_arg.add_argument('--emb_dim', type=int, default=36)
-model_arg.add_argument('--patch_size', type=tuple, default=(1,3,3))
+model_arg.add_argument('--emb_dim', type=int, default=32)
+model_arg.add_argument('--patch_size', type=tuple, default=(3,4,4))
 model_arg.add_argument('--cube_size', type=tuple, default=(2,8,8))
-model_arg.add_argument('--stage', type=int, default=1)
+model_arg.add_argument('--stage', type=int, default=2)
 model_arg.add_argument('--num_scale', type=int, default=3)
 model_arg.add_argument('--joinType' , choices=["concat" , "add" , "none"], default="concat")
 model_arg.add_argument('--num_channels' , type=int , default=3)
