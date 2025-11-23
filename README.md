@@ -1,6 +1,6 @@
-## Spatially-Guided Temporal Attention (SGuTA) and Shifted-Cube Attention (SCubA) for Video Frame Interpolation
+## Polarization video frame interpolation for 3D human pose reconstruction with attention mechanism
 
-Implementation of "**Spatially-Guided Temporal Attention (SGuTA) and Shifted-Cube Attention (SCubA) for Video Frame Interpolation**".
+Implementation of "**Polarization video frame interpolation for 3D human pose reconstruction with attention mechanism**".
 
 ## Dependencies
 
