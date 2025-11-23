@@ -1,7 +1,6 @@
 ## Polarization video frame interpolation for 3D human pose reconstruction with attention mechanism
 
-Implementation of "**Polarization video frame interpolation for 3D human pose reconstruction with attention mechanism**".
-
+Implementation of "[**Polarization video frame interpolation for 3D human pose reconstruction with attention mechanism**](https://www.sciencedirect.com/science/article/abs/pii/S0143816625002325)".
 ## Dependencies
 
 The following pakages are required to train and test the model.
@@ -27,23 +26,6 @@ pip install -r requirements.txt
 <center><img src="figures/SGuTA_SCubA.png" width="80%"></center>
 
 <center><img src="figures/Net_Arch.png" width="80%"></center>
-
-## Datasets  Preparation:
-
-Download these datasets and put it in `~/Datasets/` or modify the argument `--data_root` in `config.py` according to your data path.
-
-- Trainset:
-
-  [Vimeo 90K Septuplet Trainset](http://toflow.csail.mit.edu/).
-- Testset:
-
-  [Vimeo 90K Septuplet testset](http://toflow.csail.mit.edu/).
-
-  [Davis](https://www.google.com/url?q=https%3A%2F%2Fwww.dropbox.com%2Fs%2F9t6x7fi9ui0x6bt%2Fdavis-90.zip%3Fdl%3D0&sa=D&sntz=1&usg=AFQjCNG7jT-Up65GD33d1tUftjPYNdQxkg)
-
-  [SNU-FILM](https://www.dropbox.com/s/32wpcpt5izkhoh8/snufilm-test.zip?dl=0)
-
-  Note that we transform the **DAVIS** dataset and **SNU-FILM** dataset into septuplets while preserving the same ground truth to accommodate our network requirements and ensure fairness in comparing various models. Download selected frame septuplets for SNU-FILM testset [here](https://drive.google.com/file/d/13tsR3EJqXJjdwfDycYuwRyFY5DwPJ3jn/view?usp=share_link).
 
 ## Train
 
